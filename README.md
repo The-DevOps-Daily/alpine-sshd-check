@@ -20,6 +20,8 @@ Write-up: https://devops-daily.com/posts/alpine-openssh-password-bypass
 
 It changes nothing, does not connect to sshd and does not try to log in. It needs root to read `/etc/shadow` and to run `sshd -T`.
 
+Because it runs as root, it sets a fixed `PATH` and executes only `/usr/sbin/sshd`, `/usr/sbin/sshd.pam` or `/usr/sbin/sshd.krb5`, and only if the file is owned by root and not group- or world-writable. It counts only sshd processes that run as uid 0. If the running sshd is any other binary, it reports "cannot tell" (exit 3) and does not execute it. An earlier draft ran the path it read from `/proc/<pid>/exe`; in a test container, a root process started as `/tmp/sshd` got that file executed. That is fixed.
+
 ## The four conditions
 
 A host is affected only if all four hold on a version older than the fixed one:

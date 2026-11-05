@@ -1,4 +1,4 @@
-# alpine-3.22, recorded 2026-11-05T21:17:03Z, check.sh sha256 f40501fabe0d
+# alpine-3.22, recorded 2026-11-05T21:21:35Z, check.sh sha256 5f78e3b7e5c9
 alpine-sshd-check: CVE-2026-123158
 Alpine release:     3.22.8 (branch 3.22)
 sshd binary:        /usr/sbin/sshd (package openssh-server)
@@ -8,7 +8,7 @@ Fixed in:           10.0_p1-r11 (installed is fixed: yes)
 [2] PasswordAuthentication yes:    yes
 [3] account with '*' that can use a password login: no (1 '*' accounts, 0 usable; root is '*': yes, PermitRootLogin without-password)
 [4] local $5$/$6$ hash:            no (0 found)
-sshd running:       yes, started 2026-11-05T21:17:18Z, binary installed 2026-11-05T21:17:17Z, restart needed: no
+sshd running:       yes, started 2026-11-05T21:21:52Z, binary installed 2026-11-05T21:21:51Z, restart needed: no
 note: root is '*' but PermitRootLogin is 'without-password'; root counts only with PermitRootLogin yes (an account that can doas to root still matters)
 Result:             NOT AFFECTED: fixed openssh installed (exit 0)
 exit=0

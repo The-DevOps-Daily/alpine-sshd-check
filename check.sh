@@ -10,6 +10,13 @@
 # Usage: sh check.sh [--json]
 #        docker exec -i <container> sh -s -- --json < check.sh
 
+# Fixed PATH: this runs as root, so never resolve tools from the caller's PATH.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+# The only sshd binaries this script will ever execute (for `sshd -T`).
+ALLOWED_SSHD="/usr/sbin/sshd /usr/sbin/sshd.pam /usr/sbin/sshd.krb5"
+
 JSON=0
 case "${1:-}" in
 	--json) JSON=1 ;;
@@ -115,13 +122,16 @@ if [ "$(id -u)" != 0 ]; then
 	verdict="CANNOT TELL: run as root (needs /etc/shadow field types and sshd -T)"; code=3; finish
 fi
 
-# Find a running sshd listener (oldest sshd process).
+# Find a running sshd listener: the oldest sshd process that runs as uid 0.
+# /proc/<pid>/exe is only compared with ALLOWED_SSHD, never executed.
 clk=$(getconf CLK_TCK 2>/dev/null || echo 100)
 btime=$(awk '/^btime/ {print $2}' /proc/stat)
 oldest=""; run_pid=""
 for d in /proc/[0-9]*; do
 	comm=$(cat "$d/comm" 2>/dev/null) || continue
 	case "$comm" in sshd|sshd.pam|sshd.krb5) ;; *) continue ;; esac
+	uids=$(awk '/^Uid:/ {print $2 $3 $4 $5}' "$d/status" 2>/dev/null)
+	[ "$uids" = 0000 ] || continue
 	st=$(sed 's/.*) //' "$d/stat" 2>/dev/null | awk '{print $20}')
 	[ -n "$st" ] || continue
 	if [ -z "$oldest" ] || [ "$st" -lt "$oldest" ]; then oldest=$st; run_pid=${d#/proc/}; fi
@@ -131,7 +141,16 @@ if [ -n "$run_pid" ]; then
 	started=$((btime + oldest / clk))
 	exe=$(readlink "/proc/$run_pid/exe" 2>/dev/null)
 	case "$exe" in *" (deleted)") exe_deleted=yes; exe=${exe% (deleted)} ;; esac
-	[ -n "$exe" ] && bin=$exe
+	allowed=no
+	for a in $ALLOWED_SSHD; do [ "$exe" = "$a" ] && allowed=yes; done
+	if [ -z "$exe" ]; then
+		add_note "could not read the binary path of the running sshd (pid $run_pid)"
+	elif [ "$allowed" = yes ]; then
+		bin=$exe
+	else
+		bin=$exe
+		verdict="CANNOT TELL: the running sshd (pid $run_pid) is not a packaged sshd binary; not executed"; code=3; finish
+	fi
 fi
 
 # Which sshd binary is (or would be) used.
@@ -172,8 +191,24 @@ if [ "$running" = yes ]; then
 	fi
 fi
 
-# sshd -T for the effective global config.
-cfg=$("$bin" -T 2>/dev/null)
+# sshd -T for the effective global config. Run only an allowlisted binary
+# that is a regular file owned by root and not group- or world-writable.
+safe_bin() {
+	for a in $ALLOWED_SSHD; do
+		if [ "$1" = "$a" ] && [ -f "$1" ] && [ ! -L "$1" ]; then
+			set -- $(stat -c '%u %a' "$1" 2>/dev/null)
+			[ "${1:-}" = 0 ] && [ -n "${2:-}" ] && [ $((0$2 & 022)) -eq 0 ] && return 0
+			return 1
+		fi
+	done
+	return 1
+}
+cfg=""
+if safe_bin "$bin"; then
+	cfg=$("$bin" -T 2>/dev/null)
+else
+	verdict="CANNOT TELL: $bin is not root-owned or is group/world-writable; not executed"; code=3; finish
+fi
 if [ -z "$cfg" ]; then
 	add_note "sshd -T failed (no host keys or a config error); conditions 2 and 3 not known"
 else
