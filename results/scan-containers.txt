@@ -1,0 +1,9 @@
+CONTAINER      IMAGE          ALPINE                INSTALLED    FIXED        EXIT  RESULT
+asc-users      asc-demo:3.24  3.24.4                10.3_p1-r2   10.3_p1-r2   0     not affected
+asc-pa-no      asc-demo:3.24  3.24.4                10.3_p1-r2   10.3_p1-r2   0     not affected
+asc-edge       asc-demo:edge  3.25.0_alpha20260805  10.6_p2-r0   10.6_p2-r0   0     not affected
+asc-3.24       asc-demo:3.24  3.24.4                10.3_p1-r2   10.3_p1-r2   0     not affected
+asc-3.23       asc-demo:3.23  3.23.8                10.2_p1-r1   10.2_p1-r1   0     not affected
+asc-3.22       asc-demo:3.22  3.22.8                10.0_p1-r11  10.0_p1-r11  0     not affected
+asc-3.21       asc-demo:3.21  3.21.10               9.9_p2-r1    9.9_p2-r1    0     not affected
+scan-containers exit=0

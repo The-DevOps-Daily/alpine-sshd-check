@@ -1,0 +1,2 @@
+3.22.8
+openssh-server-10.0_p1-r11 aarch64 {openssh} (SSH-OpenSSH) [installed]

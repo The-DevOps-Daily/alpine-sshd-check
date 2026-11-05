@@ -1,0 +1,2 @@
+3.24.4
+openssh-server-10.3_p1-r2 aarch64 {openssh} (SSH-OpenSSH) [installed]

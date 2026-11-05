@@ -1,0 +1,3 @@
+deploy: !
+ops: $6$ hash (not shown)
+after setting the key-only user: deploy: *
