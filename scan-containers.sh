@@ -1,7 +1,10 @@
 #!/bin/sh
 # List running Docker containers, find Alpine ones with an sshd process and
 # run check.sh inside each (piped on stdin, nothing is copied in).
-# Read-only. Exit: highest check.sh exit code seen (0 if none checked).
+# Read-only. Exit: 1 if any container is affected, else 2 if any needs a
+# restart, else 3 if any could not be checked, else 0.
+# docker exec runs the container's own sh as root inside that container:
+# only scan containers whose images you trust.
 set -u
 cd "$(dirname "$0")"
 worst=0
@@ -26,6 +29,7 @@ for id in $(docker ps -q); do
 		0) res="not affected" ;; 1) res="AFFECTED" ;; 2) res="restart sshd" ;; *) res="cannot tell" ;;
 	esac
 	printf '%-14s %-14s %-21s %-12s %-12s %-5s %s\n' "$name" "$image" "$rel" "$(field installed_version)" "$(field fixed_version)" "$rc" "$res"
-	[ "$rc" -gt "$worst" ] && worst=$rc
+	rank() { case $1 in 1) echo 4 ;; 2) echo 3 ;; 0) echo 1 ;; *) echo 2 ;; esac; }
+	[ "$(rank "$rc")" -gt "$(rank "$worst")" ] && worst=$rc
 done
 exit "$worst"

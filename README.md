@@ -13,10 +13,10 @@ Write-up: https://devops-daily.com/posts/alpine-openssh-password-bypass
 
 ## What it reads
 
-- `/etc/alpine-release` and `/etc/apk/repositories`, to find the branch, and the installed `openssh-server` (or `openssh-server-pam`) version from `apk list -I`.
+- `/etc/alpine-release`, to find the branch (an `@edge` repository line on a stable host does not change it), and the installed `openssh-server` (or `openssh-server-pam`) version from `apk list -I`.
 - `sshd -T`, for `PasswordAuthentication`, `PermitRootLogin` and `UsePAM`.
 - The TYPE of the password field in `/etc/shadow`: it counts fields that are exactly `*` and fields that start with `$5$` or `$6$` (a locked `!$6$...` field is counted too, to stay on the safe side). It never prints, stores or sends a hash or a user name.
-- `/proc`, for the start time of the running sshd, compared with the ctime of the sshd binary (the time the package installed it).
+- `/proc`, for the running sshd: its start time, and whether it is still the same file (device and inode) as the sshd binary on disk. An upgrade writes a new file, so a daemon that was not restarted shows up as a different file.
 
 It changes nothing, does not connect to sshd and does not try to log in. It needs root to read `/etc/shadow` and to run `sshd -T`.
 
@@ -28,7 +28,7 @@ A host is affected only if all four hold on a version older than the fixed one:
 
 1. sshd is built without PAM (`openssh-server`), or it is `openssh-server-pam` with `UsePAM no`.
 2. `PasswordAuthentication yes` (the default).
-3. An account that can use a password login has `*` in the password field. Root counts only with `PermitRootLogin yes`. Directory users through `musl-nscd` count, because they have no shadow entry.
+3. An account that can use a password login has `*` in the password field. Root counts only with `PermitRootLogin yes`. If `musl-nscd` is installed, directory users have no shadow entry and count too, so the script reports "unknown". `AllowUsers`, `DenyUsers` and `Match` blocks are not evaluated, so this errs on the side of "yes".
 4. At least one local `$5$` or `$6$` hash exists.
 
 ## Exit codes
@@ -37,10 +37,10 @@ A host is affected only if all four hold on a version older than the fixed one:
 | --- | --- |
 | 0 | Not affected (fixed version, or a condition is false) |
 | 1 | Affected: vulnerable version and all four conditions hold |
-| 2 | Fixed package installed, but the running sshd started before it: `rc-service sshd restart` |
+| 2 | Fixed package installed, but the running sshd is not the file on disk: `rc-service sshd restart` |
 | 3 | Cannot tell (not root, not Alpine, `sshd -T` failed, or a `Match` block may enable passwords) |
 
-`scan-containers.sh` exits with the highest code it saw.
+`scan-containers.sh` exits 1 if any container is affected, else 2 if any needs a restart, else 3 if any could not be checked, else 0. It runs each container's own `sh` with `docker exec`, as root inside that container, so only scan containers whose images you trust.
 
 ## Fixed versions (from the advisory)
 
@@ -59,7 +59,7 @@ A host is affected only if all four hold on a version older than the fixed one:
 
 ## Results
 
-`measure.sh` records the check on throwaway containers: `alpine:3.21`, `3.22`, `3.23`, `3.24` and `edge` after `apk add openssh-server`, plus two 3.24 variants (`PasswordAuthentication no`, and a key-only user plus a user with a random password). The install step has network access; sshd then runs with `--network none`, so no port is published and nothing can connect to it. Output is in `results/`, recorded 2026-11-05 on Docker 29.9.3 (aarch64).
+`measure.sh` records the check on throwaway containers: `alpine:3.21`, `3.22`, `3.23`, `3.24` and `edge` after `apk add openssh-server`, plus two 3.24 variants (`PasswordAuthentication no`, and a key-only user plus a user with a random password). The install step has network access; sshd then runs with `--network none`, so no port is published and nothing can connect to it. Output is in `results/`, recorded 2026-11-05 on Docker 29.9.3 (aarch64, see `results/environment.txt`). `measure.sh` is the measurement harness, not the check: it creates, changes and removes its own containers and images.
 
 | Container | Installed | Exit | Notes |
 | --- | --- | --- | --- |
@@ -76,11 +76,19 @@ Two things the run found:
 - `adduser -D` on 3.24 wrote `!` (locked), not `*`. A locked account is not affected, but it also cannot log in with a key. The key-only user was then set to `*`, the state the advisory describes for key-only users.
 - OpenSSH 10.6 prints `sshd -T` keywords in mixed case (`PasswordAuthentication yes`), older versions in lower case. The first version of this script matched only lower case and reported "unknown" on edge. Match it case-insensitively (`grep -i`).
 
+## Exit code tests
+
+`test-exit-codes.sh` records `results/exit-code-tests.txt`. No vulnerable package exists any more, so exit 1 and 2 are simulations, labelled as such:
+
+- Exit 1: all four conditions true, with a temporary copy of the script whose 3.24 fixed version is raised to 10.3_p1-r3.
+- Exit 2: the same sshd binary copied and renamed over `/usr/sbin/sshd` while sshd runs, which is what an upgrade does to the file.
+- Exit 3: a root process running `/tmp/sshd` (not executed by the check), a world-writable `/usr/sbin/sshd`, and a non-root run.
+- A 3.24 container with an `@edge` repository line still uses the 3.24 fixed version.
+
 ## Not tested
 
-- No vulnerable package: Alpine replaced the packages on every branch the same day, so every fresh install got the fixed version. Exit code 1 was tested only with a temporary copy of the script whose fixed-version table was raised by one release.
-- No real "upgraded but not restarted" case, for the same reason. Exit code 2 was tested only by changing the ctime of the sshd binary with `chmod` in a running container, not with a real upgrade.
-- `openssh-server-pam`, `musl-nscd` users and tiny-cloud images were not measured.
+- No vulnerable package and no real upgrade: Alpine replaced the packages on every branch the same day, so every fresh install got the fixed version.
+- `openssh-server-pam`, `musl-nscd` users, tiny-cloud images and branches 3.16 to 3.20 were not measured.
 
 ## License
 

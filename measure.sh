@@ -1,5 +1,7 @@
 #!/bin/sh
-# Record check.sh output on throwaway Alpine containers.
+# Record check.sh output on throwaway Alpine containers. This is the
+# measurement harness, not the check: it creates, changes and removes its own
+# containers and images (never anything else).
 # Install phase: `apk add openssh-server` with network access (no sshd runs).
 # Check phase: sshd runs with --network none (loopback only, no published
 # port, nothing can connect to it). Nothing here attempts SSH authentication.
@@ -13,6 +15,7 @@ TAGS=${TAGS:-"3.21 3.22 3.23 3.24 edge"}
 mkdir -p results
 stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 sum=$(sha256sum check.sh | cut -c1-12)
+{ echo "recorded $stamp"; uname -m; docker version --format 'docker client {{.Client.Version}}, server {{.Server.Version}}'; } > results/environment.txt 2>&1
 
 record() { # name container
 	{

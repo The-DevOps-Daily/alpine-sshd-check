@@ -54,12 +54,12 @@ pkgver() {
 	}'
 }
 
-json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+json_str() { printf '"%s"' "$(printf '%s' "$1" | tr -d '\000-\037' | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
 release=""; branch=""; pkg=""; installed=""; fixed=""; version_fixed="unknown"
 bin=""; c1="unknown"; c2="unknown"; c3="unknown"; c4="unknown"
 star_total=0; star_login=0; root_star=0; sha_count=0; prl=""; usepam=""
-running="no"; started=""; bin_ctime=""; exe_deleted="no"; restart="no"
+running="no"; started=""; bin_ctime=""; exe_deleted="no"; restart="no"; run_ino=""; disk_ino=""
 verdict=""; code=3
 
 finish() {
@@ -72,7 +72,7 @@ finish() {
 		printf '"no_password_account":%s,"local_sha_crypt_hash":%s},' "$(json_str "$c3")" "$(json_str "$c4")"
 		printf '"star_accounts":%d,"star_accounts_password_login":%d,"root_is_star":%s,"sha_crypt_hashes":%d,' \
 			"$star_total" "$star_login" "$( [ "$root_star" = 1 ] && echo true || echo false)" "$sha_count"
-		printf '"permitrootlogin":%s,"sshd_running":%s,"sshd_started_utc":%s,"sshd_binary_installed_utc":%s,' \
+		printf '"permitrootlogin":%s,"sshd_running":%s,"sshd_started_utc":%s,"sshd_binary_ctime_utc":%s,' \
 			"$(json_str "$prl")" "$(json_str "$running")" "$(json_str "$(utc "$started")")" "$(json_str "$(utc "$bin_ctime")")"
 		printf '"running_binary_deleted":%s,"restart_needed":%s,"verdict":%s,"exit_code":%d,"notes":[' \
 			"$(json_str "$exe_deleted")" "$(json_str "$restart")" "$(json_str "$verdict")" "$code"
@@ -95,7 +95,7 @@ finish() {
 		echo "[3] account with '*' that can use a password login: $c3 ($star_total '*' accounts, $star_login usable; root is '*': $([ "$root_star" = 1 ] && echo yes || echo no), PermitRootLogin ${prl:-unknown})"
 		echo "[4] local \$5\$/\$6\$ hash:            $c4 ($sha_count found)"
 		if [ "$running" = yes ]; then
-			echo "sshd running:       yes, started $(utc "$started"), binary installed $(utc "$bin_ctime"), restart needed: $restart"
+			echo "sshd running:       yes, started $(utc "$started"), binary on disk changed $(utc "$bin_ctime"), restart needed: $restart"
 		else
 			echo "sshd running:       no"
 		fi
@@ -115,7 +115,6 @@ case "$release" in
 	*_alpha*|*_beta*|*_rc*) branch=edge ;;
 	*) branch=$(echo "$release" | cut -d. -f1,2) ;;
 esac
-grep -q '/edge/' /etc/apk/repositories 2>/dev/null && branch=edge
 fixed=$(fixed_for_branch "$branch")
 
 if [ "$(id -u)" != 0 ]; then
@@ -141,6 +140,7 @@ if [ -n "$run_pid" ]; then
 	started=$((btime + oldest / clk))
 	exe=$(readlink "/proc/$run_pid/exe" 2>/dev/null)
 	case "$exe" in *" (deleted)") exe_deleted=yes; exe=${exe% (deleted)} ;; esac
+	run_ino=$(stat -L -c '%d:%i' "/proc/$run_pid/exe" 2>/dev/null)
 	allowed=no
 	for a in $ALLOWED_SSHD; do [ "$exe" = "$a" ] && allowed=yes; done
 	if [ -z "$exe" ]; then
@@ -183,10 +183,16 @@ if [ -n "$installed" ] && [ -n "$fixed" ]; then
 fi
 [ -z "$fixed" ] && add_note "no fixed version known for branch '$branch' (advisory covers 3.16 to 3.24 and edge)"
 
-# Restart check: running daemon older than the binary on disk.
+# Restart check: the running daemon is not the file now on disk (an upgrade
+# writes a new file and renames it over the old one).
 bin_ctime=$(stat -c %Z "$bin" 2>/dev/null)
+disk_ino=$(stat -c '%d:%i' "$bin" 2>/dev/null)
 if [ "$running" = yes ]; then
-	if [ "$exe_deleted" = yes ] || { [ -n "$bin_ctime" ] && [ "$started" -lt "$bin_ctime" ]; }; then
+	if [ "$exe_deleted" = yes ]; then
+		restart=yes
+	elif [ -z "$run_ino" ] || [ -z "$disk_ino" ]; then
+		restart=unknown
+	elif [ "$run_ino" != "$disk_ino" ]; then
 		restart=yes
 	fi
 fi
@@ -196,9 +202,11 @@ fi
 safe_bin() {
 	for a in $ALLOWED_SSHD; do
 		if [ "$1" = "$a" ] && [ -f "$1" ] && [ ! -L "$1" ]; then
-			set -- $(stat -c '%u %a' "$1" 2>/dev/null)
-			[ "${1:-}" = 0 ] && [ -n "${2:-}" ] && [ $((0$2 & 022)) -eq 0 ] && return 0
-			return 1
+			for f in "$1" /usr/sbin /usr /; do
+				set -- $(stat -c '%u %a' "$f" 2>/dev/null)
+				[ "${1:-}" = 0 ] && [ -n "${2:-}" ] && [ $((0$2 & 022)) -eq 0 ] || return 1
+			done
+			return 0
 		fi
 	done
 	return 1
@@ -207,7 +215,7 @@ cfg=""
 if safe_bin "$bin"; then
 	cfg=$("$bin" -T 2>/dev/null)
 else
-	verdict="CANNOT TELL: $bin is not root-owned or is group/world-writable; not executed"; code=3; finish
+	verdict="CANNOT TELL: $bin or a parent directory is not root-owned or is group/world-writable; not executed"; code=3; finish
 fi
 if [ -z "$cfg" ]; then
 	add_note "sshd -T failed (no host keys or a config error); conditions 2 and 3 not known"
@@ -215,6 +223,8 @@ else
 	pa=$(echo "$cfg" | awk 'tolower($1)=="passwordauthentication" {print tolower($2)}')
 	prl=$(echo "$cfg" | awk 'tolower($1)=="permitrootlogin" {print tolower($2)}')
 	usepam=$(echo "$cfg" | awk 'tolower($1)=="usepam" {print tolower($2)}')
+	grep -qiE '^[[:space:]]*Match[[:space:]]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null && \
+		add_note "Match blocks found and not evaluated; sshd -T shows the global settings"
 	case "$pa" in
 		yes) c2=yes ;;
 		no)
@@ -246,8 +256,8 @@ else
 	if [ "$star_login" -gt 0 ]; then c3=yes
 	elif [ "$root_star" = 1 ] && [ -z "$prl" ]; then c3=unknown
 	else c3=no; fi
-	if apk info -e musl-nscd >/dev/null 2>&1; then
-		c3=yes; add_note "musl-nscd installed: directory users have no shadow entry and count as accounts with no password"
+	if apk info -e musl-nscd >/dev/null 2>&1 && [ "$c3" != yes ]; then
+		c3=unknown; add_note "musl-nscd installed: directory users have no shadow entry and count as accounts with no password; check them"
 	fi
 	if [ "$sha_count" -gt 0 ]; then c4=yes; else c4=no; fi
 fi
@@ -259,8 +269,10 @@ for c in "$c1" "$c2" "$c3" "$c4"; do
 done
 
 if [ "$version_fixed" = yes ]; then
-	if [ "$restart" = yes ]; then
-		verdict="FIXED PACKAGE, BUT RESTART NEEDED: the running sshd started before the fixed package was installed (rc-service sshd restart)"; code=2
+	if [ "$restart" = unknown ]; then
+		verdict="CANNOT TELL: fixed package installed, but could not compare the running sshd with the file on disk"; code=3
+	elif [ "$restart" = yes ]; then
+		verdict="FIXED PACKAGE, BUT RESTART NEEDED: the running sshd is not the sshd file now on disk (rc-service sshd restart)"; code=2
 	else
 		verdict="NOT AFFECTED: fixed openssh installed"; code=0
 	fi

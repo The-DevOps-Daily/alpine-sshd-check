@@ -1,0 +1,18 @@
+# recorded 2026-11-05T21:40:57Z, check.sh sha256 a8f69fed4397
+T1 simulated exit 1: all four conditions true, fixed-version table raised to 10.3_p1-r3 in a temporary copy
+  exit=1  Result:             AFFECTED: all four conditions hold on a vulnerable version. Run apk upgrade -U -a, then rc-service sshd restart (exit 1)
+T1 control: same container, real check.sh
+  exit=0  Result:             NOT AFFECTED: fixed openssh installed (exit 0)
+T2 before: sshd running, file untouched
+  exit=0  Result:             NOT AFFECTED: fixed openssh installed (exit 0)
+T2 simulated exit 2: same binary copied and renamed over /usr/sbin/sshd while sshd runs (what an upgrade does to the file)
+  exit=2  Result:             FIXED PACKAGE, BUT RESTART NEEDED: the running sshd is not the sshd file now on disk (rc-service sshd restart) (exit 2)
+T3 exit 3: the running root sshd is /tmp/sshd, then replaced by a script that touches /tmp/EXECUTED
+  exit=3  Result:             CANNOT TELL: the running sshd (pid 1) is not a packaged sshd binary; not executed (exit 3)
+  /tmp/EXECUTED exists: no
+T4 exit 3: /usr/sbin/sshd is world-writable
+  exit=3  Result:             CANNOT TELL: /usr/sbin/sshd or a parent directory is not root-owned or is group/world-writable; not executed (exit 3)
+T5 a 3.24 host with an @edge repository line still uses the 3.24 fixed version
+  exit=0  Result:             NOT AFFECTED: fixed openssh installed (exit 0)
+T6 not root
+  Result:             CANNOT TELL: run as root (needs /etc/shadow field types and sshd -T) (exit 3)
