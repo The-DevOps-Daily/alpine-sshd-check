@@ -115,6 +115,12 @@ case "$release" in
 	*_alpha*|*_beta*|*_rc*) branch=edge ;;
 	*) branch=$(echo "$release" | cut -d. -f1,2) ;;
 esac
+# An untagged, uncommented edge repository means apk can install edge
+# packages on a stable release: compare against the edge fix.
+if [ "$branch" != edge ] && grep -qE '^[[:space:]]*[^@#[:space:]][^[:space:]]*/edge/' /etc/apk/repositories 2>/dev/null; then
+	add_note "an untagged edge repository is configured; compared against the edge fixed version"
+	branch=edge
+fi
 fixed=$(fixed_for_branch "$branch")
 
 if [ "$(id -u)" != 0 ]; then
@@ -175,10 +181,38 @@ fi
 
 installed=$(pkgver "$pkg")
 [ -z "$installed" ] && installed=$(pkgver openssh-server-common)
-if [ -n "$installed" ] && [ -n "$fixed" ]; then
-	case "$(apk version -t "$installed" "$fixed" 2>/dev/null)" in
-		"<") version_fixed=no ;;
+
+# A package pinned to a tagged repository (openssh-server@tag in
+# /etc/apk/world) came from that repository, not from the release branch.
+source_unclear=no
+tag=$(sed -n 's/^openssh[a-z-]*@\([A-Za-z0-9_-]*\).*/\1/p' /etc/apk/world 2>/dev/null | head -n 1)
+if [ -n "$tag" ]; then
+	if grep -qE "^[[:space:]]*@$tag[[:space:]]+[^[:space:]]*/edge/" /etc/apk/repositories 2>/dev/null; then
+		add_note "openssh is pinned to @$tag, an edge repository; compared against the edge fixed version"
+		branch=edge; fixed=$(fixed_for_branch edge)
+	else
+		source_unclear=yes; add_note "openssh is pinned to repository tag @$tag; its source branch is not known"
+	fi
+fi
+
+vcmp() { apk version -t "$1" "$2" 2>/dev/null; }
+edge_fixed=$(fixed_for_branch edge)
+if [ -n "$installed" ] && [ "$source_unclear" = no ]; then
+	case "$(vcmp "$installed" "$edge_fixed")" in
 		"="|">") version_fixed=yes ;;
+		*)
+			if [ -n "$fixed" ]; then
+				case "$(vcmp "$installed" "$fixed")" in
+					"<") version_fixed=no ;;
+					"=") version_fixed=yes ;;
+					">")
+						# Newer than this branch's fix: fixed only if it is the same
+						# upstream release series; otherwise it came from elsewhere.
+						if [ "${installed%-r*}" = "${fixed%-r*}" ]; then version_fixed=yes
+						else source_unclear=yes; add_note "installed $installed is newer than the $branch fix but not from its release series; its source is not known"
+						fi ;;
+				esac
+			fi ;;
 	esac
 fi
 [ -z "$fixed" ] && add_note "no fixed version known for branch '$branch' (advisory covers 3.16 to 3.24 and edge)"
@@ -268,7 +302,9 @@ for c in "$c1" "$c2" "$c3" "$c4"; do
 	case "$c" in no) anyno=yes; all=no ;; unknown) all=no ;; esac
 done
 
-if [ "$version_fixed" = yes ]; then
+if [ "$source_unclear" = yes ]; then
+	verdict="CANNOT TELL: the installed openssh did not come from a known branch; compare it with the fixed versions by hand"; code=3
+elif [ "$version_fixed" = yes ]; then
 	if [ "$restart" = unknown ]; then
 		verdict="CANNOT TELL: fixed package installed, but could not compare the running sshd with the file on disk"; code=3
 	elif [ "$restart" = yes ]; then

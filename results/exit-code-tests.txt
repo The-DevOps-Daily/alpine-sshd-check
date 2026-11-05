@@ -1,4 +1,4 @@
-# recorded 2026-11-05T21:40:57Z, check.sh sha256 a8f69fed4397
+# recorded 2026-11-05T21:50:01Z, check.sh sha256 acf8081149b8
 T1 simulated exit 1: all four conditions true, fixed-version table raised to 10.3_p1-r3 in a temporary copy
   exit=1  Result:             AFFECTED: all four conditions hold on a vulnerable version. Run apk upgrade -U -a, then rc-service sshd restart (exit 1)
 T1 control: same container, real check.sh
@@ -16,3 +16,12 @@ T5 a 3.24 host with an @edge repository line still uses the 3.24 fixed version
   exit=0  Result:             NOT AFFECTED: fixed openssh installed (exit 0)
 T6 not root
   Result:             CANNOT TELL: run as root (needs /etc/shadow field types and sshd -T) (exit 3)
+T7 a 3.24 host (all four conditions true, 3.24 fixed package) with an untagged edge repository line: compared against the edge fix, fails closed
+  exit=1  Result:             AFFECTED: all four conditions hold on a vulnerable version. Run apk upgrade -U -a, then rc-service sshd restart (exit 1)
+T8 build: openssh-server@edge on 3.24 (exit 0):
+  openssh-server-10.6_p2-r0 aarch64 {openssh} (SSH-OpenSSH) [installed]
+  openssh-server@edge
+T8 a 3.24 host with openssh-server pinned to @edge: compared against the edge fix
+  exit=0  Result:             NOT AFFECTED: fixed openssh installed (exit 0)
+T9 simulated: T8 container with the @edge pin removed from /etc/apk/world and the edge fix raised to 10.6_p2-r1 in a temporary copy (an edge build newer than the 3.24 fix, source not visible)
+  exit=3  Result:             CANNOT TELL: the installed openssh did not come from a known branch; compare it with the fixed versions by hand (exit 3)

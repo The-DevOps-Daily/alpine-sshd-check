@@ -13,7 +13,7 @@ Write-up: https://devops-daily.com/posts/alpine-openssh-password-bypass
 
 ## What it reads
 
-- `/etc/alpine-release`, to find the branch (an `@edge` repository line on a stable host does not change it), and the installed `openssh-server` (or `openssh-server-pam`) version from `apk list -I`.
+- `/etc/alpine-release` and `/etc/apk/repositories`, to find the branch, and `/etc/apk/world` for a repository pin, and the installed `openssh-server` (or `openssh-server-pam`) version from `apk list -I`.
 - `sshd -T`, for `PasswordAuthentication`, `PermitRootLogin` and `UsePAM`.
 - The TYPE of the password field in `/etc/shadow`: it counts fields that are exactly `*` and fields that start with `$5$` or `$6$` (a locked `!$6$...` field is counted too, to stay on the safe side). It never prints, stores or sends a hash or a user name.
 - `/proc`, for the running sshd: its start time, and whether it is still the same file (device and inode) as the sshd binary on disk. An upgrade writes a new file, so a daemon that was not restarted shows up as a different file.
@@ -21,6 +21,15 @@ Write-up: https://devops-daily.com/posts/alpine-openssh-password-bypass
 It changes nothing, does not connect to sshd and does not try to log in. It needs root to read `/etc/shadow` and to run `sshd -T`.
 
 Because it runs as root, it sets a fixed `PATH` and executes only `/usr/sbin/sshd`, `/usr/sbin/sshd.pam` or `/usr/sbin/sshd.krb5`, and only if the file is owned by root and not group- or world-writable. It counts only sshd processes that run as uid 0. If the running sshd is any other binary, it reports "cannot tell" (exit 3) and does not execute it. An earlier draft ran the path it read from `/proc/<pid>/exe`; in a test container, a root process started as `/tmp/sshd` got that file executed. That is fixed.
+
+## Mixed sources
+
+A stable host can install openssh from edge. The check fails closed:
+
+- An untagged, uncommented `/edge/` repository line: compared against the edge fixed version.
+- openssh pinned to a tag (`openssh-server@edge` in `/etc/apk/world`): compared against the edge fix if that tag points to an edge repository, otherwise "cannot tell".
+- An installed version newer than the branch fix but from another release series (and older than the edge fix): "cannot tell", never "not affected".
+- A tagged `@edge` line with nothing pinned to it does not change the branch.
 
 ## The four conditions
 
@@ -83,7 +92,7 @@ Two things the run found:
 - Exit 1: all four conditions true, with a temporary copy of the script whose 3.24 fixed version is raised to 10.3_p1-r3.
 - Exit 2: the same sshd binary copied and renamed over `/usr/sbin/sshd` while sshd runs, which is what an upgrade does to the file.
 - Exit 3: a root process running `/tmp/sshd` (not executed by the check), a world-writable `/usr/sbin/sshd`, and a non-root run.
-- A 3.24 container with an `@edge` repository line still uses the 3.24 fixed version.
+- Mixed sources: a tagged `@edge` line with nothing pinned (exit 0), an untagged edge line on 3.24 (exit 1, fails closed), a real `apk add openssh-server@edge` on 3.24 (10.6_p2-r0, exit 0), and the same container with the pin removed and the edge fix raised in a temporary copy (exit 3).
 
 ## Not tested
 
